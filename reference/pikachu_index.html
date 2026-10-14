@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+
+<script src="frame-guard.js?v=202608131539" data-home="https://www.pikachucodien.net/"></script>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#06131f">
+<meta name="description" content="Chơi Game Pikachu Cổ Điển cũ trên PikachuCoDien.net. Đây là trò chơi Pikachu cũ 2003 huyền thoại. Bạn có thể chơi online, trên PC, điện thoại. Không cần cài đặt!">
+<title>Pikachu Cổ Điển - Chơi Game Pikachu Cũ 2003</title>
+<meta name="robots" content="noindex, nofollow" />
+<link rel="preload" href="images/pieces-sprite.png" as="image">
+<link rel="stylesheet" href="css/pikachu.css?v=202608131539">
+</head>
+<body>
+
+<svg id="icons" aria-hidden="true"><defs>
+  <g id="i-sound-on" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M11 5 6 9H3v6h3l5 4V5Z"/><path d="M15.5 8.8a4.5 4.5 0 0 1 0 6.4"/><path d="M18.4 5.9a8.5 8.5 0 0 1 0 12.2"/>
+  </g>
+  <g id="i-sound-off" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M11 5 6 9H3v6h3l5 4V5Z"/><path d="m16 9.5 5 5M21 9.5l-5 5"/>
+  </g>
+  <g id="i-shuffle" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M16 3h5v5"/><path d="M4 20 21 3"/><path d="M21 16v5h-5"/><path d="m15 15 6 6"/><path d="m3 4 5 5"/>
+  </g>
+  <g id="i-hint" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2Z"/><path d="M9.5 20h5"/><path d="M10.5 22.5h3"/>
+  </g>
+  <g id="i-size" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M9 4v16M15 4v16M3 9.3h18M3 14.7h18"/>
+  </g>
+  <g id="i-rank" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M7 4h10v6a5 5 0 0 1-10 0V4Z"/><path d="M7 6H4.5v1.5A3.5 3.5 0 0 0 8 11"/><path d="M17 6h2.5v1.5A3.5 3.5 0 0 1 16 11"/><path d="M12 15v3"/><path d="M8.5 21h7l-1-3h-5l-1 3Z"/>
+  </g>
+  <g id="i-replay" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3.5 12a8.5 8.5 0 1 0 2.9-6.4"/><path d="M3 4.5V10h5.5"/>
+  </g>
+</defs></svg>
+
+<div id="app">
+
+  <header id="hud">
+    <div class="stat s-level"><span class="k">Bàn</span><span class="v" id="level">1</span></div>
+    <div class="stat s-blood"><span class="k">Lượt đổi</span><span class="v" id="blood">10</span></div>
+    <div class="stat s-score"><span class="k">Điểm</span><span class="v" id="score">0</span></div>
+    <div class="stat s-best" ><span class="k">Kỷ lục</span><span class="v" id="best">0</span></div>
+    <button type="button" id="btnRank" title="Bảng xếp hạng">
+      <span class="k">Xếp hạng</span><svg class="ic" viewBox="0 0 24 24"><use href="#i-rank"/></svg>
+    </button>
+  </header>
+
+  <main id="stage">
+    <div id="boardWrap">
+      <div id="board" role="grid" aria-label="Bàn cờ Pikachu"></div>
+      <div id="timeTrack" role="img" aria-label="Thời gian còn lại"><div id="timebar"></div></div>
+    </div>
+  </main>
+
+  <footer id="controls">
+    <button type="button" id="btnSound" title="Bật/tắt âm thanh">
+      <svg class="ic" viewBox="0 0 24 24"><use class="on"  href="#i-sound-on"/><use class="off" href="#i-sound-off"/></svg>
+      <span class="lb">Âm thanh</span>
+    </button>
+    <button type="button" id="btnShuffle" title="Xáo lại vị trí các quân">
+      <svg class="ic" viewBox="0 0 24 24"><use href="#i-shuffle"/></svg><span class="lb">Đổi vị trí</span>
+    </button>
+    <button type="button" id="btnHint" class="primary" title="Gợi ý một cặp">
+      <svg class="ic" viewBox="0 0 24 24"><use href="#i-hint"/></svg><span class="lb">Gợi ý</span>
+      <span class="badge" id="hintLeft">3</span>
+    </button>
+    <button type="button" id="btnSize" title="Đổi cỡ bàn cờ">
+      <svg class="ic" viewBox="0 0 24 24"><use href="#i-size"/></svg><span class="lb">Cỡ bàn</span>
+    </button>
+    <button type="button" id="btnReplay" title="Chơi lại từ đầu">
+      <svg class="ic" viewBox="0 0 24 24"><use href="#i-replay"/></svg><span class="lb">Chơi lại</span>
+    </button>
+  </footer>
+
+</div>
+
+<div id="loader"><div class="box"><p>Đang tải…</p><div class="track"><i id="loadBar"></i></div></div></div>
+
+<div id="modal" hidden>
+  <div class="card" role="dialog" aria-modal="true" aria-labelledby="mTitle">
+    <h2 id="mTitle"></h2>
+    <p id="mText"></p>
+    <div id="mLb" hidden></div>
+    <div class="acts" id="mActs"></div>
+  </div>
+</div>
+
+<div id="toast" hidden></div>
+
+<script>window.PIKA_API = '';</script>
+
+<script src="js/session.js?v=202608131539" defer></script>
+<script src="js/leaderboard.js?v=202608131539" defer></script>
+<script src="js/pikachu.js?v=202608131539" defer></script>
+</body>
+</html>

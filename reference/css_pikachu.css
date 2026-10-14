@@ -1,0 +1,726 @@
+/* ==========================================================================
+   Pikachu Cổ Điển — stylesheet duy nhất
+   Toạ độ bàn cờ giữ nguyên hệ px gốc (ô 42x52, icon 40x50); toàn bộ việc
+   co giãn do transform: scale() trên #board đảm nhiệm -> icon giữ đúng tỉ lệ.
+   ========================================================================== */
+
+:root {
+    /* bề mặt kính */
+    --surface:        rgba(255, 255, 255, .10);
+    --surface-strong: rgba(255, 255, 255, .16);
+    --stroke:         rgba(255, 255, 255, .22);
+    --stroke-soft:    rgba(255, 255, 255, .13);
+    --ink:            #ffffff;
+    --ink-dim:        rgba(255, 255, 255, .60);
+    --shadow:         0 6px 22px rgba(0, 0, 0, .38);
+
+    /* màu nhấn */
+    --c-level: #4cc9f0;
+    --c-blood: #b98cff;
+    --c-score: #ffd426;
+    --c-best:  #6ee7a0;
+
+    --amber-1: #ffe06a;
+    --amber-2: #ffb300;
+
+    /* thanh thời gian */
+    --t-hi:  #3ddc97;
+    --t-mid: #ffd426;
+    --t-lo:  #ff5a5a;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body { margin: 0; padding: 0; height: 100%; }
+
+/* ==========================================================================
+   NỀN — dựng hoàn toàn bằng CSS, không dùng file ảnh.
+
+   Ảnh nền cũ là tranh ngang cố định 880x620: mọi tỉ lệ màn hình khác đều phải
+   chọn giữa cắt mất (cover) hoặc để hở viền (contain), lại còn tốn ~21KB và
+   dính cache mỗi lần sửa. Nền chuyển sắc thì đúng khít mọi khung hình, nặng 0
+   byte, và đổi màu chỉ bằng vài biến.
+
+   Mỗi lớp là một quầng sáng radial đặt ở một góc, chồng lên nền tối -> tạo
+   chiều sâu kiểu "mesh gradient" thay vì một mảng phẳng.
+   ========================================================================== */
+
+body {
+    /* mặc định: Biển sâu */
+    --bg-base: #061a2b;
+    --bg-g1: rgba(22, 112, 164, .58);
+    --bg-g2: rgba(0, 184, 194, .30);
+    --bg-g3: rgba(9, 38, 88, .68);
+
+    background-color: var(--bg-base);
+    background-image:
+        radial-gradient(88% 68% at 14%  6%,  var(--bg-g1) 0%, transparent 62%),
+        radial-gradient(72% 62% at 88% 14%,  var(--bg-g2) 0%, transparent 58%),
+        radial-gradient(96% 72% at 50% 104%, var(--bg-g3) 0%, transparent 64%);
+    color: var(--ink);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    font-variant-numeric: tabular-nums;      /* số không nhảy cột khi điểm đổi */
+    overflow: hidden;
+    overscroll-behavior: none;
+    touch-action: manipulation;
+    -webkit-text-size-adjust: 100%;
+    -webkit-tap-highlight-color: transparent;
+    /* Cố tình KHÔNG dùng transition ở đây: nền chỉ đổi lúc bắt đầu ván mới nên
+       hiệu ứng gần như không ai thấy, đổi lại nếu tab đang ẩn thì transition
+       không chạy và màu kẹt luôn ở tông cũ. */
+}
+
+body.theme-2 {                               /* Hoàng hôn tím */
+    --bg-base: #150a2c;
+    --bg-g1: rgba(124, 52, 194, .55);
+    --bg-g2: rgba(232, 74, 146, .32);
+    --bg-g3: rgba(42, 14, 82, .66);
+}
+
+body.theme-3 {                               /* Rừng ngọc */
+    --bg-base: #04201d;
+    --bg-g1: rgba(20, 158, 118, .52);
+    --bg-g2: rgba(140, 214, 100, .30);
+    --bg-g3: rgba(4, 46, 62, .66);
+}
+
+/* Tông ấm phải đậm hơn hẳn các tông kia: ô cờ vốn màu kem, nếu nền cũng ngả
+   vàng nâu thì hai bên trôi vào nhau, quân cờ mất viền. */
+body.theme-4 {                               /* Hổ phách đêm */
+    --bg-base: #190c10;
+    --bg-g1: rgba(184, 88, 22, .44);
+    --bg-g2: rgba(238, 158, 48, .22);
+    --bg-g3: rgba(40, 10, 18, .72);
+}
+
+body.theme-5 {                               /* Chàm */
+    --bg-base: #0a1030;
+    --bg-g1: rgba(62, 92, 220, .50);
+    --bg-g2: rgba(0, 198, 220, .26);
+    --bg-g3: rgba(18, 10, 62, .66);
+}
+
+/* Lớp hạt nhiễu rất mảnh. Không phải để trang trí: nền chuyển sắc lớn trên màn
+   8-bit hay bị vằn thành từng dải, rắc hạt là cách chuẩn để phá vằn.
+   Dùng ô 200x200 lặp lại (stitchTiles) chứ không phủ nguyên màn — feTurbulence
+   toàn màn hình rất tốn CPU lúc vẽ lần đầu. */
+body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: -2;
+    pointer-events: none;
+    opacity: .055;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.75' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* tối dần ra rìa để bàn cờ ở giữa nổi lên */
+#app::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: radial-gradient(115% 78% at 50% 45%, transparent 32%, rgba(0, 0, 0, .45) 100%);
+    pointer-events: none;
+    z-index: -1;
+}
+
+#icons { position: absolute; width: 0; height: 0; overflow: hidden; }
+
+/* Chữ chỉ dành cho trình đọc màn hình: không hiện nhưng vẫn được đọc.
+   Dùng cho nút chỉ có biểu tượng. Thiếu quy tắc này là chữ hiện ra và phá bố cục. */
+.sr {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+}
+
+/* --------------------------------------------------------------- khung app */
+
+#app {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    height: 100dvh;
+    padding: max(8px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right))
+             max(8px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left));
+    gap: 8px;
+}
+
+/* ---------------------------------------------------------------- thanh HUD */
+
+#hud {
+    flex: none;
+    display: flex;
+    justify-content: center;
+    gap: clamp(6px, 1.6vw, 14px);
+}
+
+.stat {
+    flex: 0 1 auto;
+    min-width: 0;
+    padding: 6px clamp(13px, 3.4vw, 22px);   /* bỏ ô "Thời gian" -> còn chỗ cho thẻ thoáng hơn */
+    text-align: center;
+    background: var(--surface);
+    border: 1px solid var(--stroke-soft);
+    border-radius: 14px;
+    box-shadow: var(--shadow);
+    -webkit-backdrop-filter: blur(14px) saturate(1.3);
+    backdrop-filter: blur(14px) saturate(1.3);
+}
+
+/* Dùng chung cho cả thẻ HUD và nhãn nút cúp, để cỡ chữ/màu/giãn chữ luôn khớp
+   nhau — trước đó .k bó trong .stat nên nút bị lệch cỡ chữ (13.3px vs 12px). */
+#hud .k {
+    display: block;
+    font-size: clamp(9px, 2vw, 12px);
+    font-weight: 600;
+    letter-spacing: .07em;
+    text-transform: uppercase;
+    color: var(--ink-dim);
+    white-space: nowrap;
+}
+
+.stat .v {
+    display: block;
+    margin-top: 1px;
+    font-size: clamp(20px, 5.4vw, 32px);
+    font-weight: 800;
+    line-height: 1.1;
+    letter-spacing: -.01em;
+    color: var(--accent, var(--ink));
+    text-shadow: 0 0 18px color-mix(in srgb, var(--accent, #fff) 55%, transparent);
+}
+
+/* Nút cúp nằm ngoài thẻ "Kỷ lục": cùng chất liệu kính mờ, cao đúng bằng thẻ
+   (align-self: stretch) nên không phá nhịp hàng HUD. Nó là thông tin, không phải
+   hành động trong ván, nên không thuộc hàng nút dưới.
+   KHÔNG dùng aspect-ratio ở đây: kết hợp với align-self:stretch sẽ thành vòng
+   lặp — nút kéo cao cả hàng, hàng cao lại kéo nút rộng thêm (đo được 116x116px). */
+#hud #btnRank {
+    -webkit-appearance: none;
+    appearance: none;
+    flex: none;
+    align-self: stretch;
+    padding: 6px clamp(10px, 2.4vw, 16px);
+    display: inline-flex;
+    flex-direction: column;      /* xếp nhãn trên, biểu tượng dưới — giống hệt cấu trúc thẻ HUD */
+    align-items: center;
+    justify-content: flex-start;
+    gap: 4px;
+    color: var(--c-score);
+    background: var(--surface);
+    border: 1px solid var(--stroke-soft);
+    border-radius: 14px;
+    box-shadow: var(--shadow);
+    -webkit-backdrop-filter: blur(14px) saturate(1.3);
+    backdrop-filter: blur(14px) saturate(1.3);
+    cursor: pointer;
+    transition: transform .12s ease, background .2s ease, border-color .2s ease;
+}
+
+#hud #btnRank .ic { width: clamp(22px, 4.4vw, 27px); height: clamp(22px, 4.4vw, 27px); margin-top: auto; margin-bottom: auto; }
+#hud #btnRank:active { transform: scale(.94); }
+
+/* Màn hình hẹp: bỏ chữ, giữ biểu tượng — đúng cách hàng nút dưới đang làm.
+   HUD chỉ còn ~26px dôi ra ở khổ 375px, thêm chữ vào là tràn. */
+@media (max-width: 560px) {
+    #hud #btnRank { padding: 0; width: 46px; justify-content: center; }
+    #hud #btnRank .k { display: none; }
+}
+#hud #btnRank:focus-visible { outline: 2px solid var(--c-score); outline-offset: 3px; }
+
+@media (hover: hover) and (pointer: fine) {
+    #hud #btnRank:hover { background: var(--surface-strong); border-color: rgba(255, 212, 38, .55); }
+}
+
+.s-level { --accent: var(--c-level); }
+.s-blood { --accent: var(--c-blood); }
+.s-score { --accent: var(--c-score); }
+.s-best  { --accent: var(--c-best);  }
+
+/* ------------------------------------------------------------ khu vực chơi */
+
+/* flex-basis PHẢI là 0, không được là auto: kích thước #stage là thước đo để
+   chọn cỡ bàn, nếu nó phụ thuộc vào bàn hiện tại thì sẽ thành vòng lặp phản hồi
+   và bàn cờ co dần sau mỗi màn. */
+#stage {
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    overflow: hidden;
+}
+
+#boardWrap { flex: none; position: relative; }
+
+#board {
+    position: relative;
+    transform-origin: top left;
+    /* width/height/transform do JS đặt theo cỡ bàn và tỉ lệ co giãn */
+}
+
+/* ------------------------------------------------------------- thanh thời gian */
+
+/* Thanh nằm TRONG dải viền trống của bàn cờ, ngay sát mép trên hàng ô đầu tiên,
+   dài đúng bằng vùng ô cờ (vị trí và chiều dài do JS đặt theo tỉ lệ co giãn).
+   Vì định vị tuyệt đối nên nó không chiếm thêm chỗ nào của bố cục, cũng không
+   ảnh hưởng tới số đo dùng để chọn cỡ bàn.
+   Màu là một sắc duy nhất chuyển dần lục -> hổ phách -> đỏ theo thời gian còn lại. */
+#timeTrack {
+    position: absolute;
+    z-index: 2;
+    height: 8px;
+    display: flex;
+    align-items: stretch;
+    background: rgba(255, 255, 255, .14);
+    border-radius: 999px;
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, .45);
+}
+
+#timebar {
+    width: calc(var(--pct, 1) * 100%);
+    height: 100%;
+    border-radius: 999px;
+    background: var(--fill, var(--t-hi));
+    box-shadow: 0 0 10px -1px var(--fill, var(--t-hi));
+    transition: background-color .5s linear, box-shadow .5s linear;
+}
+
+/* ------------------------------------------------------------------ quân cờ */
+
+.piece {
+    position: absolute;
+    width: 42px;
+    height: 52px;
+    border: 1px solid rgba(255, 255, 255, .28);
+    border-radius: 7px;
+    background-color: rgba(255, 255, 255, .07);
+    background-image: url('../images/pieces-sprite.png');
+    background-repeat: no-repeat;
+    background-origin: content-box;
+    background-clip: content-box;
+    cursor: pointer;
+    transition: opacity .12s linear, border-color .12s linear, box-shadow .12s linear, transform .1s ease;
+}
+
+.piece.hidden { visibility: hidden; }
+
+.piece.sel {
+    opacity: .55;
+    border-color: var(--amber-2);
+    box-shadow: 0 0 0 2px rgba(255, 179, 0, .55), 0 0 14px rgba(255, 179, 0, .55);
+    transform: scale(.94);
+}
+
+.piece.hint {
+    border-color: var(--c-score);
+    box-shadow: 0 0 0 2px rgba(255, 212, 38, .6), 0 0 16px 2px rgba(255, 212, 38, .75);
+}
+
+/* hiệu ứng rê chuột chỉ bật trên thiết bị thực sự có con trỏ -> mobile không bị "hover dính" */
+@media (hover: hover) and (pointer: fine) {
+    .piece:hover { border-color: #fff; box-shadow: 0 0 12px rgba(255, 255, 255, .5); }
+}
+
+.line {
+    position: absolute;
+    background: linear-gradient(90deg, var(--amber-1), #fff);
+    border-radius: 3px;
+    box-shadow: 0 0 10px 2px rgba(255, 224, 106, .9);
+    visibility: hidden;
+    pointer-events: none;
+}
+
+/* --------------------------------------------------------------- nút điều khiển */
+
+#controls {
+    flex: none;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    align-items: center;
+    gap: clamp(6px, 1.6vw, 14px);
+}
+
+#controls button {
+    -webkit-appearance: none;
+    appearance: none;
+    position: relative;                     /* mốc cho huy hiệu đếm lượt gợi ý */
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-height: 46px;                       /* vùng chạm đạt chuẩn */
+    padding: 0 16px;
+    font: 600 clamp(13px, 1.6vw, 15px)/1 inherit;
+    color: var(--ink);
+    background: var(--surface);
+    border: 1px solid var(--stroke);
+    border-radius: 14px;
+    box-shadow: var(--shadow);
+    -webkit-backdrop-filter: blur(14px) saturate(1.3);
+    backdrop-filter: blur(14px) saturate(1.3);
+    cursor: pointer;
+    transition: transform .12s ease, background .2s ease, box-shadow .2s ease, border-color .2s ease;
+}
+
+#controls .ic { width: 22px; height: 22px; flex: none; }
+#controls .lb { white-space: nowrap; }
+
+#controls button:active { transform: scale(.95); }
+
+#controls button:focus-visible {
+    outline: 2px solid var(--c-score);
+    outline-offset: 3px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+    #controls button:hover {
+        background: var(--surface-strong);
+        border-color: rgba(255, 255, 255, .4);
+        box-shadow: 0 8px 26px rgba(0, 0, 0, .42);
+    }
+}
+
+/* nút hành động chính */
+#controls button.primary {
+    color: #402b00;
+    background: linear-gradient(180deg, var(--amber-1), var(--amber-2));
+    border-color: rgba(255, 255, 255, .5);
+    box-shadow: 0 6px 20px rgba(255, 179, 0, .38);
+}
+
+@media (hover: hover) and (pointer: fine) {
+    #controls button.primary:hover {
+        background: linear-gradient(180deg, #fff0a8, #ffc22e);
+        box-shadow: 0 8px 26px rgba(255, 179, 0, .5);
+    }
+}
+
+/* Huy hiệu đếm số lượt gợi ý còn lại. Đặt ở góc nút chứ không thêm một thẻ nữa
+   vào HUD — vừa gọn, vừa vẫn thấy được khi màn hình hẹp (lúc đó nhãn chữ bị ẩn). */
+#btnHint .badge {
+    position: absolute;
+    top: -7px;
+    right: -7px;
+    min-width: 21px;
+    height: 21px;
+    padding: 0 5px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: 800;
+    line-height: 1;
+    color: #fff;
+    background: #e0483c;
+    border: 1.5px solid rgba(255, 255, 255, .9);
+    border-radius: 999px;
+    box-shadow: 0 2px 7px rgba(0, 0, 0, .45);
+}
+
+/* hết lượt: nút xỉn đi nhưng vẫn bấm được, để còn báo lý do */
+#controls #btnHint.spent {
+    color: rgba(64, 43, 0, .45);
+    background: linear-gradient(180deg, #d9cb9c, #c2a45f);
+    box-shadow: none;
+}
+
+#btnHint.spent .ic { opacity: .5; }
+#btnHint.spent .badge { background: #6b7280; border-color: rgba(255, 255, 255, .55); }
+
+/* biểu tượng loa đổi theo trạng thái */
+#btnSound .off,
+#btnSound.snd-off .on { display: none; }
+#btnSound.snd-off .off { display: inline; }
+#btnSound.snd-off { color: var(--ink-dim); border-color: var(--stroke-soft); }
+
+/* màn hình hẹp: bỏ nhãn chữ, giữ biểu tượng -> 5 nút vẫn đủ trên một hàng */
+@media (max-width: 560px) {
+    #controls button { padding: 0 12px; min-width: 46px; }
+    #controls .lb { display: none; }
+    #controls .ic { width: 23px; height: 23px; }
+}
+
+/* Điện thoại nằm ngang: chiều cao rất eo hẹp, nên đưa HUD và hàng nút ra hai
+   bên để bàn cờ chiếm trọn chiều cao. */
+@media (orientation: landscape) and (max-height: 560px) {
+    #app { flex-direction: row; align-items: stretch; gap: 8px; }
+
+    /* chiều rộng cố định: nếu để co theo số chữ số của điểm thì mỗi lần điểm
+       tăng thêm một chữ số, khu vực bàn cờ lại đổi kích thước */
+    #hud      { flex-direction: column; justify-content: center; gap: 6px; width: 92px; }
+    #controls { flex-direction: column; justify-content: center; gap: 6px; width: 60px; }
+
+    /* chiều cao là thứ khan hiếm nhất ở đây -> thanh dựng đứng, nằm trong dải viền
+       trống bên trái, sát cột ô cờ đầu tiên */
+    #timeTrack { width: 8px; height: auto; align-items: flex-end; }
+    #timebar { width: 100%; height: calc(var(--pct, 1) * 100%); }
+
+    #controls button { padding: 0; width: 52px; min-width: 52px; }
+    #controls .lb { display: none; }
+    .stat { padding: 4px 6px; }
+    .stat .v { font-size: 19px; }
+    #hud .k { font-size: 9px; }
+
+    /* HUD xếp dọc: nút rộng bằng cả cột, chiều cao để tự co theo nhãn + biểu tượng
+       (ép cứng 42px sẽ cắt mất chữ) */
+    #hud #btnRank { width: auto; height: auto; padding: 5px 6px; }
+    #hud #btnRank .ic { width: 22px; height: 22px; }
+}
+
+/* ------------------------------------------------------------ loader & modal */
+
+#loader {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #06131f;
+    z-index: 50;
+    transition: opacity .3s ease;
+}
+
+#loader.done { opacity: 0; pointer-events: none; }
+#loader .box { text-align: center; font-size: 15px; color: var(--ink-dim); letter-spacing: .04em; }
+#loader .track { width: 220px; height: 6px; margin: 12px auto 0; background: rgba(255, 255, 255, .12); border-radius: 999px; overflow: hidden; }
+#loader .track i { display: block; height: 100%; width: 0; border-radius: 999px; background: linear-gradient(90deg, var(--t-hi), var(--c-score)); transition: width .15s linear; }
+
+#modal {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    background: rgba(3, 12, 20, .68);
+    -webkit-backdrop-filter: blur(6px);
+    backdrop-filter: blur(6px);
+    z-index: 60;
+}
+
+#modal[hidden] { display: none; }
+
+#modal .card {
+    width: min(440px, 100%);
+    padding: 26px 24px 22px;
+    text-align: center;
+    background: linear-gradient(180deg, rgba(30, 58, 82, .96), rgba(10, 26, 40, .96));
+    border: 1px solid var(--stroke);
+    border-radius: 20px;
+    box-shadow: 0 24px 60px rgba(0, 0, 0, .6);
+    animation: cardIn .22s cubic-bezier(.2, .9, .3, 1.2);
+}
+
+@keyframes cardIn { from { opacity: 0; transform: translateY(12px) scale(.97); } }
+
+#modal h2 {
+    margin: 0 0 10px;
+    font-size: clamp(20px, 5vw, 26px);
+    font-weight: 800;
+    letter-spacing: -.01em;
+    color: var(--c-score);
+}
+
+#modal p { margin: 0 0 20px; font-size: clamp(14px, 3.6vw, 15px); line-height: 1.6; color: rgba(255, 255, 255, .82); }
+#modal p b { color: var(--ink); }
+#modal p i { display: inline-block; margin-top: 6px; font-size: 13px; color: var(--ink-dim); }
+#modal .acts { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+
+#modal button {
+    min-height: 46px;
+    padding: 0 20px;
+    font: 700 15px/1 inherit;
+    color: #402b00;
+    background: linear-gradient(180deg, var(--amber-1), var(--amber-2));
+    border: 1px solid rgba(255, 255, 255, .45);
+    border-radius: 13px;
+    box-shadow: 0 6px 18px rgba(255, 179, 0, .32);
+    cursor: pointer;
+    transition: transform .12s ease, box-shadow .2s ease;
+}
+
+#modal button:active { transform: scale(.96); }
+#modal button:focus-visible { outline: 2px solid #fff; outline-offset: 3px; }
+
+#modal button.ghost {
+    color: var(--ink);
+    background: var(--surface);
+    border-color: var(--stroke);
+    box-shadow: none;
+}
+
+/* ========================================================== bảng xếp hạng */
+
+#lbModal {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    background: rgba(3, 12, 20, .68);
+    -webkit-backdrop-filter: blur(6px);
+    backdrop-filter: blur(6px);
+    z-index: 61;
+}
+
+#lbModal[hidden] { display: none; }
+
+#lbModal .card {
+    width: min(440px, 100%);
+    padding: 20px;
+    background: linear-gradient(180deg, rgba(30, 58, 82, .96), rgba(10, 26, 40, .96));
+    border: 1px solid var(--stroke);
+    border-radius: 20px;
+    box-shadow: 0 24px 60px rgba(0, 0, 0, .6);
+    animation: cardIn .22s cubic-bezier(.2, .9, .3, 1.2);
+}
+
+.lb-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+.lb-head h2 { margin: 0; font-size: clamp(17px, 4.4vw, 21px); font-weight: 800; color: var(--c-score); }
+
+.lb-x {
+    width: 36px; height: 36px;
+    font-size: 24px; line-height: 1;
+    color: var(--ink-dim);
+    background: transparent;
+    border: 0; border-radius: 10px;
+    cursor: pointer;
+}
+
+.lb-x:hover { color: var(--ink); background: var(--surface); }
+
+/* ô nhập tên */
+.lb-namerow { display: flex; gap: 8px; margin-bottom: 14px; }
+
+.lb-namerow input {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 44px;
+    padding: 0 14px;
+    font: 600 15px/1 inherit;
+    color: var(--ink);
+    background: rgba(0, 0, 0, .3);
+    border: 1px solid var(--stroke);
+    border-radius: 12px;
+}
+
+.lb-namerow input::placeholder { color: rgba(255, 255, 255, .38); font-weight: 400; }
+.lb-namerow input:focus { outline: 2px solid var(--c-score); outline-offset: 1px; border-color: transparent; }
+
+.lb-namerow button {
+    flex: none;
+    height: 44px;
+    padding: 0 18px;
+    font: 700 15px/1 inherit;
+    color: #402b00;
+    background: linear-gradient(180deg, var(--amber-1), var(--amber-2));
+    border: 1px solid rgba(255, 255, 255, .45);
+    border-radius: 12px;
+    cursor: pointer;
+}
+
+/* tab kỳ hạn */
+.lb-tabs { display: flex; gap: 6px; margin-bottom: 12px; }
+
+.lb-tab {
+    flex: 1 1 0;
+    min-width: 0;
+    height: 36px;
+    padding: 0 4px;
+    font: 600 clamp(11px, 3vw, 13px)/1 inherit;
+    white-space: nowrap;
+    color: var(--ink-dim);
+    background: var(--surface);
+    border: 1px solid var(--stroke-soft);
+    border-radius: 10px;
+    cursor: pointer;
+    transition: color .15s ease, background .15s ease;
+}
+
+.lb-tab.on {
+    color: #402b00;
+    background: linear-gradient(180deg, var(--amber-1), var(--amber-2));
+    border-color: rgba(255, 255, 255, .45);
+}
+
+/* danh sách */
+.lb-list { min-height: 176px; max-height: 40vh; overflow-y: auto; }
+
+.lb-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    border-radius: 10px;
+}
+
+.lb-row + .lb-row { margin-top: 3px; }
+.lb-row:nth-child(odd) { background: rgba(255, 255, 255, .05); }
+
+/* dòng của chính mình luôn nổi bật để tìm ra ngay */
+.lb-row.me {
+    background: rgba(255, 212, 38, .16);
+    box-shadow: inset 0 0 0 1px rgba(255, 212, 38, .5);
+}
+
+.lb-pos { flex: none; width: 26px; font-size: 15px; font-weight: 800; text-align: center; color: var(--ink-dim); }
+.lb-nm  { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+.lb-sc  { flex: none; font-size: 15px; font-weight: 800; color: var(--c-score); }
+.lb-row.me .lb-nm { font-weight: 700; }
+
+.lb-msg { margin: 26px 8px; text-align: center; font-size: 14px; line-height: 1.6; color: var(--ink-dim); }
+
+.lb-mine {
+    margin-top: 12px;
+    padding-top: 12px;
+    font-size: 13px;
+    text-align: center;
+    color: var(--ink-dim);
+    border-top: 1px solid var(--stroke-soft);
+}
+
+.lb-mine b { color: var(--c-score); }
+
+/* khi nhúng vào hộp thoại kết thúc ván */
+#mLb { margin: 4px 0 18px; text-align: left; }
+#mLb[hidden] { display: none; }
+#mLb .lb-list { min-height: 132px; max-height: 30vh; }
+
+#toast {
+    position: fixed;
+    left: 50%;
+    bottom: calc(20px + env(safe-area-inset-bottom));
+    transform: translateX(-50%);
+    max-width: calc(100vw - 32px);
+    padding: 11px 18px;
+    font-size: 14px;
+    font-weight: 600;
+    text-align: center;
+    color: #06131f;
+    background: linear-gradient(180deg, #fff, #ffe9a8);
+    border-radius: 999px;
+    box-shadow: 0 8px 26px rgba(0, 0, 0, .5);
+    z-index: 55;
+    animation: toastIn .22s ease;
+}
+
+#toast[hidden] { display: none; }
+
+@keyframes toastIn { from { opacity: 0; transform: translate(-50%, 10px); } }
+
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { transition-duration: .01ms !important; animation-duration: .01ms !important; }
+}
