@@ -1,16 +1,16 @@
 """Solve the Classic Pikachu game at pikachucodien.net with a real browser.
 
-The bot reads rendered tiles, searches for pairs connectable with at most two
-turns, and sends pointer events to the game's board. It rereads the board after
-every match because later levels move the remaining tiles.
+The bot reads rendered tiles, simulates each stage's falling pattern, and
+chooses pairs that preserve future moves. It rereads the board after every
+match so a shuffle or game update cannot desynchronize the solver.
 """
 
 from __future__ import annotations
 
 import argparse
-import heapq
 import time
 from dataclasses import dataclass
+from itertools import combinations
 from pathlib import Path
 from typing import Sequence
 
@@ -108,49 +108,232 @@ def parse_state(raw: dict) -> GameState:
     )
 
 
+class PathIndex:
+    """O(1) straight-line clearance checks for all candidate tile pairs."""
+
+    def __init__(self, board: Sequence[Sequence[int]]) -> None:
+        self.board = board
+        self.rows, self.cols = len(board), len(board[0])
+        self.row_sums = [[0] * (self.cols + 1) for _ in range(self.rows)]
+        self.col_sums = [[0] * (self.rows + 1) for _ in range(self.cols)]
+        for row in range(self.rows):
+            for col in range(self.cols):
+                occupied = board[row][col] != 0
+                self.row_sums[row][col + 1] = self.row_sums[row][col] + occupied
+                self.col_sums[col][row + 1] = self.col_sums[col][row] + occupied
+
+    def clear_row(self, row: int, first: int, last: int) -> bool:
+        low, high = sorted((first, last))
+        return high - low <= 1 or self.row_sums[row][high] == self.row_sums[row][low + 1]
+
+    def clear_col(self, col: int, first: int, last: int) -> bool:
+        low, high = sorted((first, last))
+        return high - low <= 1 or self.col_sums[col][high] == self.col_sums[col][low + 1]
+
+    def open_corner(self, row: int, col: int, first: Tile, second: Tile) -> bool:
+        return self.board[row][col] == 0 or (row, col) in (
+            (first.row, first.col), (second.row, second.col)
+        )
+
+    def connected(self, first: Tile, second: Tile) -> bool:
+        """Check straight, one-turn and two-turn paths, including outer border."""
+        if first == second or self.board[first.row][first.col] != self.board[second.row][second.col]:
+            return False
+        if first.row == second.row and self.clear_row(first.row, first.col, second.col):
+            return True
+        if first.col == second.col and self.clear_col(first.col, first.row, second.row):
+            return True
+
+        # Any two-turn path has a middle segment on some row or column.
+        for row in range(self.rows):
+            if (self.open_corner(row, first.col, first, second)
+                    and self.open_corner(row, second.col, first, second)
+                    and self.clear_col(first.col, first.row, row)
+                    and self.clear_row(row, first.col, second.col)
+                    and self.clear_col(second.col, row, second.row)):
+                return True
+        for col in range(self.cols):
+            if (self.open_corner(first.row, col, first, second)
+                    and self.open_corner(second.row, col, first, second)
+                    and self.clear_row(first.row, first.col, col)
+                    and self.clear_col(col, first.row, second.row)
+                    and self.clear_row(second.row, col, second.col)):
+                return True
+        return False
+
+
+def find_pairs(board: Sequence[Sequence[int]]) -> list[tuple[Tile, Tile]]:
+    """List all currently playable pairs in a stable order."""
+    positions: dict[int, list[Tile]] = {}
+    for row in range(1, len(board) - 1):
+        for col in range(1, len(board[0]) - 1):
+            kind = board[row][col]
+            if kind:
+                positions.setdefault(kind, []).append(Tile(row, col))
+    paths = PathIndex(board)
+    return [pair for tiles in positions.values() for pair in combinations(tiles, 2)
+            if paths.connected(*pair)]
+
+
 def find_pair(board: Sequence[Sequence[int]]) -> tuple[Tile, Tile] | None:
-    """Find equal tiles joined by an unobstructed path with <= 2 turns.
+    """Compatibility helper for callers needing any legal pair."""
+    pairs = find_pairs(board)
+    return pairs[0] if pairs else None
 
-    Dijkstra search tracks position, direction and turn count. The zero border
-    permits the same outside routes that the game accepts.
+
+# ---------------------------------------------------------------------------
+# Exact stage movement and pattern-aware pair selection
+# ---------------------------------------------------------------------------
+
+def shift_zone(board: list[list[int]], col_start: int, row_start: int,
+               col_end: int, row_end: int, direction: tuple[int, int]) -> None:
+    """Repeat the site's ordered one-cell swaps until the zone stops moving."""
+    dr, dc = direction
+    rows, cols = len(board) - 2, len(board[0]) - 2
+    while True:
+        moved = False
+        for col in range(col_start, col_end + 1):
+            for row in range(row_start, row_end + 1):
+                target_row, target_col = row + dr, col + dc
+                if (board[row][col] and 1 <= target_row <= rows
+                        and 1 <= target_col <= cols and board[target_row][target_col] == 0):
+                    board[target_row][target_col] = board[row][col]
+                    board[row][col] = 0
+                    moved = True
+        if not moved:
+            return
+
+
+def simulate_move(board: Sequence[Sequence[int]], level: int,
+                  pair: tuple[Tile, Tile]) -> tuple[tuple[int, ...], ...]:
+    """Remove a pair and apply the game's level-specific falling pattern."""
+    result = [list(row) for row in board]
+    first, second = pair
+    result[first.row][first.col] = result[second.row][second.col] = 0
+    rows, cols = len(result) - 2, len(result[0]) - 2
+    half_row, half_col = (rows + 1) // 2, cols // 2
+    full = (1, 1, cols, rows)
+
+    if level == 2:        # down
+        shift_zone(result, *full, (1, 0))
+    elif level == 3:      # up
+        shift_zone(result, *full, (-1, 0))
+    elif level == 4:      # left
+        shift_zone(result, *full, (0, -1))
+    elif level == 5:      # right
+        shift_zone(result, *full, (0, 1))
+    elif level == 6:      # top up, bottom down
+        shift_zone(result, 1, half_row, cols, rows, (1, 0))
+        shift_zone(result, 1, 1, cols, half_row - 1, (-1, 0))
+    elif level == 7:      # bottom up, top down; boundary crossing is possible
+        shift_zone(result, 1, half_row, cols, rows, (-1, 0))
+        shift_zone(result, 1, 1, cols, half_row - 1, (1, 0))
+    elif level == 8:      # left half left, right half right
+        shift_zone(result, 1, 1, half_col, rows, (0, -1))
+        shift_zone(result, half_col + 1, 1, cols, rows, (0, 1))
+    elif level == 9:      # left half right, right half left
+        shift_zone(result, 1, 1, half_col, rows, (0, 1))
+        shift_zone(result, half_col + 1, 1, cols, rows, (0, -1))
+    elif level != 1:
+        raise ValueError(f"Unknown level: {level}")
+    return tuple(tuple(row) for row in result)
+
+
+def choose_pair(board: Sequence[Sequence[int]], level: int) -> tuple[Tile, Tile] | None:
+    """Prefer moves that leave many distinct pair choices after the shift."""
+    pairs = find_pairs(board)
+    if not pairs:
+        return None
+    if len(pairs) == 1:
+        return pairs[0]
+
+    best_pair, best_score = pairs[0], (-1, -1, -1)
+    for pair in pairs:
+        next_board = simulate_move(board, level, pair)
+        next_pairs = find_pairs(next_board)
+        remaining = sum(value != 0 for row in next_board for value in row)
+        distinct_kinds = len({next_board[a.row][a.col] for a, _ in next_pairs})
+        score = (remaining == 0 or bool(next_pairs), distinct_kinds, len(next_pairs))
+        if score > best_score:
+            best_pair, best_score = pair, score
+    return best_pair
+
+
+BEAM_WIDTH = 12
+PLAN_NODE_BUDGET = 3000
+PLAN_TIME_BUDGET = 4.0
+
+
+def plan_stage(board: tuple[tuple[int, ...], ...], level: int,
+               beam_width: int = BEAM_WIDTH,
+               node_budget: int = PLAN_NODE_BUDGET,
+               time_budget: float = PLAN_TIME_BUDGET) -> list[tuple[Tile, Tile]]:
+    """Plan as many matches as possible before any shuffle is needed.
+
+    Each beam layer represents one more removed pair. Boards that still have
+    moves are kept; boards that deadlock are discarded while a continuation
+    exists. If a complete solution is found, its whole path is returned.
+    Node and wall-time budgets bound planning on unusually branchy boards.
     """
-    rows, cols = len(board), len(board[0])
-    directions = ((-1, 0), (0, 1), (1, 0), (0, -1))
+    initial_pairs = find_pairs(board)
+    if not initial_pairs:
+        return []
+    if beam_width < 1 or node_budget < 1 or time_budget <= 0:
+        raise ValueError("Planning budgets must be positive.")
 
-    for start_row in range(1, rows - 1):
-        for start_col in range(1, cols - 1):
-            kind = board[start_row][start_col]
-            if kind == 0:
-                continue
-            start = Tile(start_row, start_col)
-            queue = [(0, 0, start_row, start_col, -1)]
-            best: dict[tuple[int, int, int], int] = {}
+    remaining = sum(value != 0 for row in board for value in row)
+    frontier = [(board, (), initial_pairs)]
+    best_path: tuple[tuple[Tile, Tile], ...] = ()
+    explored = 0
+    deadline = time.perf_counter() + time_budget
 
-            while queue:
-                turns, steps, row, col, previous = heapq.heappop(queue)
-                if turns > 2:
-                    break
-                if previous >= 0 and best.get((row, col, previous), 3) < turns:
+    def before_deadlock(path: tuple[tuple[Tile, Tile], ...]) -> list[tuple[Tile, Tile]]:
+        # Replan shortly before a dead end found by the beam. A path cut short
+        # by the budget already ends on a board known to have another move.
+        return list(path[:max(1, len(path) - 3)])
+
+    while frontier:
+        successors = {}
+        terminal_path = None
+        for current, path, pairs in frontier:
+            for pair in pairs:
+                if explored >= node_budget or time.perf_counter() >= deadline:
+                    if successors:
+                        return list(max(successors.values(), key=lambda value: value[0])[1])
+                    return list(best_path or (pair,))
+                explored += 1
+                next_board = simulate_move(current, level, pair)
+                next_path = path + (pair,)
+                if remaining == 2:
+                    return list(next_path)
+
+                next_pairs = find_pairs(next_board)
+                if not next_pairs:
+                    terminal_path = next_path
                     continue
 
-                for direction, (dr, dc) in enumerate(directions):
-                    new_turns = turns + (previous >= 0 and direction != previous)
-                    if new_turns > 2:
-                        continue
-                    next_row, next_col = row + dr, col + dc
-                    if not (0 <= next_row < rows and 0 <= next_col < cols):
-                        continue
-                    value = board[next_row][next_col]
-                    if value:
-                        if value == kind and (next_row, next_col) != (start_row, start_col):
-                            return start, Tile(next_row, next_col)
-                        continue
-                    key = (next_row, next_col, direction)
-                    if new_turns < best.get(key, 3):
-                        best[key] = new_turns
-                        heapq.heappush(queue, (new_turns, steps + 1, next_row, next_col, direction))
+                accessible = {next_board[a.row][a.col] for a, _ in next_pairs}
+                counts = {}
+                for row in next_board:
+                    for kind in row:
+                        if kind:
+                            counts[kind] = counts.get(kind, 0) + 1
+                stranded_twins = sum(count == 2 and kind not in accessible
+                                      for kind, count in counts.items())
+                score = (len(accessible), -stranded_twins, len(next_pairs))
+                previous = successors.get(next_board)
+                if previous is None or score > previous[0]:
+                    successors[next_board] = (score, next_path, next_pairs)
 
-    return None
+        if not successors:
+            return before_deadlock(terminal_path) if terminal_path else list(best_path)
+        ranked = sorted(successors.items(), key=lambda item: item[1][0], reverse=True)
+        frontier = [(candidate, path, pairs)
+                    for candidate, (_, path, pairs) in ranked[:beam_width]]
+        best_path = frontier[0][1]
+        remaining -= 2
+
+    return list(best_path)
 
 
 # ---------------------------------------------------------------------------
@@ -206,18 +389,24 @@ def play(driver: webdriver.Chrome, max_moves: int | None, pause_on_result: bool)
     driver.get(GAME_URL)
     WebDriverWait(driver, 30).until(lambda d: d.execute_script(READ_GAME) is not None)
     moves = 0
+    shuffles_used = 0
+    plan: list[tuple[Tile, Tile]] = []
+    planned_board = None
+    planned_level = None
 
     while True:
         state = read_state(driver)
 
         if state.modal:
             if "Hoàn thành" in state.modal:
-                print(f"Victory: all 9 levels complete. Final score: {state.score}.")
+                print(f"Victory: all 9 levels complete. Final score: {state.score}. "
+                      f"Shuffles used: {shuffles_used}.")
                 wait_for_review(driver, pause_on_result)
                 return state
             if "Bàn tiếp theo" in state.actions:
                 print(f"Level {state.level - 1} clear; score {state.score}.")
                 click_action(driver, "Bàn tiếp theo")
+                plan = []
                 WebDriverWait(driver, 10).until(lambda d: not read_state(d).modal)
                 continue
             print(f"Game stopped: {state.modal} (score {state.score}).")
@@ -228,7 +417,16 @@ def play(driver: webdriver.Chrome, max_moves: int | None, pause_on_result: bool)
             print(f"Stopped after {moves} moves for inspection. Level {state.level}, score {state.score}.")
             return state
 
-        pair = find_pair(state.board)
+        if state.board != planned_board or state.level != planned_level:
+            plan = []
+        if not plan:
+            started = time.perf_counter()
+            plan = plan_stage(state.board, state.level)
+            planned_board, planned_level = state.board, state.level
+            if plan:
+                print(f"Level {state.level}: planned {len(plan)} matches "
+                      f"in {time.perf_counter() - started:.1f}s.")
+        pair = plan.pop(0) if plan else None
         if pair is None:
             if state.shuffles <= 0:
                 print(f"No available pair or remaining shuffles. Level {state.level}, score {state.score}.")
@@ -236,9 +434,12 @@ def play(driver: webdriver.Chrome, max_moves: int | None, pause_on_result: bool)
                 raise GameOverError("No available pair or remaining shuffles.")
             print(f"Level {state.level}: no pair available; shuffling ({state.shuffles} left).")
             driver.execute_script("document.querySelector('#btnShuffle').click()")
+            shuffles_used += 1
+            plan = []
             continue
 
         first, second = pair
+        expected = simulate_move(state.board, state.level, pair)
         driver.execute_async_script(
             PLAY_PAIR,
             {"row": first.row, "col": first.col},
@@ -249,6 +450,16 @@ def play(driver: webdriver.Chrome, max_moves: int | None, pause_on_result: bool)
             raise RuntimeError(
                 f"Pair {first} and {second} was not removed; board may have changed."
             )
+        if not updated.modal and updated.level == state.level:
+            if updated.shuffles < state.shuffles:
+                shuffles_used += state.shuffles - updated.shuffles  # Site auto-shuffle.
+                print(f"Level {state.level}: automatic shuffle with {updated.remaining} tiles left "
+                      f"({updated.shuffles} chances remain).")
+                plan = []
+            elif updated.board != expected:
+                raise RuntimeError("Observed tile movement differs from the stage model.")
+            else:
+                planned_board = expected
         moves += 1
         if moves % 20 == 0:
             print(f"Move {moves}: level {updated.level}, {updated.remaining} tiles left, score {updated.score}.")
